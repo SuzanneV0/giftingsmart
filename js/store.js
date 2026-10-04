@@ -45,10 +45,29 @@ export async function createStore(config) {
     const store = new ServerStore(config.clerkPublishableKey);
     // Clerk is only contacted when it's needed: a returning signed-in visitor, or a click on
     // "Continue with Google". Everyone else's visits never reach a third party.
-    if (hasSignedInCookie()) await store.ensureClerk();
+    if (hasSignedInCookie() || signInStarted() || /[?&#]__clerk|sso-callback/.test(location.href)) await store.ensureClerk();
     return store;
   }
   return new LocalStore();
+}
+
+// Set when someone opens the sign-in window, so Clerk loads again when Google sends them back
+// (before Clerk's own cookie exists) and can finish signing them in. Cleared once signed in.
+const SIGNING_IN = 'giftbudget-signing-in';
+function signInStarted() {
+  try {
+    return sessionStorage.getItem(SIGNING_IN) === '1';
+  } catch {
+    return false;
+  }
+}
+function setSigningIn(on) {
+  try {
+    if (on) sessionStorage.setItem(SIGNING_IN, '1');
+    else sessionStorage.removeItem(SIGNING_IN);
+  } catch {
+    /* storage blocked: sign-in still works within this page */
+  }
 }
 
 // Clerk keeps a first-party "__client_uat" cookie: 0 when signed out, a timestamp when signed in.
@@ -106,11 +125,13 @@ class ServerStore {
     if (!this.loading) {
       this.loading = loadClerk(this.publishableKey).then((clerk) => {
         this.clerk = clerk;
+        if (clerk.user) setSigningIn(false);
         let last = clerk.user?.id ?? null;
         clerk.addListener(({ user }) => {
           const id = user?.id ?? null;
           if (id === last) return;
           last = id;
+          if (id) setSigningIn(false);
           for (const cb of this.authListeners) cb(user ? toUser(user) : null);
         });
         return clerk;
@@ -131,6 +152,7 @@ class ServerStore {
   // automatically, so it behaves like the old "Continue with Google".
   async signInWithGoogle() {
     const clerk = await this.ensureClerk();
+    setSigningIn(true);
     clerk.openSignIn({ withSignUp: true, forceRedirectUrl: location.origin + location.pathname + location.hash });
   }
 
