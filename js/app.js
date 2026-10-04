@@ -33,8 +33,8 @@ const pref = {
   },
 };
 
-const CURRENCIES = ['USD', 'CAD', 'EUR', 'GBP', 'AUD', 'NZD'];
-let currency = pref.get('giftbudget-currency', 'USD');
+const CURRENCIES = ['CAD', 'USD', 'EUR', 'GBP', 'AUD', 'NZD'];
+let currency = pref.get('giftbudget-currency', 'CAD');
 let moneyFmt = new Intl.NumberFormat(undefined, { style: 'currency', currency });
 const money = (n) => (n == null ? '—' : moneyFmt.format(Number(n)));
 
