@@ -1,7 +1,6 @@
-// Supabase connection. Both values are public (the anon key only works within
-// the database's row-level security rules), so they're safe to commit.
-// Leave them empty to run in demo mode, with data kept in this browser.
+// Sign-in connection. The Clerk publishable key is public by design (it identifies the app,
+// it doesn't grant access), so it's safe to commit. On Vercel it's filled in at build time.
+// Leave it empty to run in demo mode, with data kept in this browser.
 window.GIFT_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  clerkPublishableKey: '',
 };

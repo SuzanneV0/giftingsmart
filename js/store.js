@@ -1,8 +1,9 @@
 // Data layer. Two interchangeable stores with the same async API:
-//   SupabaseStore: real accounts (Google sign-in) and a Postgres database
-//   LocalStore:    demo mode kept in this browser's localStorage, used when
-//                  config.js has no Supabase project yet
-import { mockPrice, detectAlert, round2 } from '../supabase/functions/_shared/pricing.js';
+//   ServerStore: real accounts (Google sign-in through Clerk), with data in the
+//                Turso database behind the app's own API (api/ on Vercel)
+//   LocalStore:  demo mode kept in this browser's localStorage, used when
+//                config.js has no Clerk key yet
+import { mockPrice, detectAlert, round2 } from '../shared/pricing.js';
 
 // Set when a visitor chooses "Try the demo" on the live site: the app then
 // runs on sample data kept in this browser instead of the real database.
@@ -34,30 +35,50 @@ export function exitDemo() {
 }
 
 export async function createStore(config) {
-  const configured = !!(config.supabaseUrl && config.supabaseAnonKey);
+  const configured = !!config.clerkPublishableKey;
   if (configured && readDemoFlag()) {
     const demo = new LocalStore();
     demo.visitorDemo = true; // live site, visitor chose the demo
     return demo;
   }
   if (configured) {
-    await loadScript('vendor/supabase.js'); // self-hosted @supabase/supabase-js (UMD build)
-    const client = window.supabase.createClient(config.supabaseUrl, config.supabaseAnonKey, {
-      auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true },
-    });
-    return new SupabaseStore(client);
+    const store = new ServerStore(config.clerkPublishableKey);
+    // Clerk is only contacted when it's needed: a returning signed-in visitor, or a click on
+    // "Continue with Google". Everyone else's visits never reach a third party.
+    if (hasSignedInCookie()) await store.ensureClerk();
+    return store;
   }
   return new LocalStore();
 }
 
-function loadScript(src) {
+// Clerk keeps a first-party "__client_uat" cookie: 0 when signed out, a timestamp when signed in.
+function hasSignedInCookie() {
+  return document.cookie.split('; ').some((c) => {
+    const [name, value] = c.split('=');
+    return name.startsWith('__client_uat') && value && value !== '0';
+  });
+}
+
+function loadScript(src, attrs = {}) {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = src;
+    s.crossOrigin = 'anonymous';
+    for (const [k, v] of Object.entries(attrs)) s.setAttribute(k, v);
     s.onload = resolve;
-    s.onerror = () => reject(new Error(`Couldn't load ${src}`));
+    s.onerror = () => reject(new Error('The sign-in service didn’t load. Check your connection or ad blocker, then reload.'));
     document.head.append(s);
   });
+}
+
+// Clerk's browser library and sign-in window load from the app's Clerk host, which is encoded
+// in the publishable key.
+async function loadClerk(publishableKey) {
+  const host = atob(publishableKey.split('_').pop()).replace(/\$$/, '');
+  await loadScript(`https://${host}/npm/@clerk/ui@1/dist/ui.browser.js`);
+  await loadScript(`https://${host}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`, { 'data-clerk-publishable-key': publishableKey });
+  await window.Clerk.load({ ui: { ClerkUI: window.__internal_ClerkUICtor } });
+  return window.Clerk;
 }
 
 const byDate = (key) => (a, b) => new Date(a[key]) - new Date(b[key]);
@@ -71,172 +92,170 @@ function normalizeEvent(e) {
 
 // ---------------------------------------------------------------------------
 
-class SupabaseStore {
-  constructor(client) {
-    this.db = client;
+class ServerStore {
+  constructor(publishableKey) {
+    this.publishableKey = publishableKey;
+    this.clerk = null;
+    this.loading = null;
+    this.authListeners = [];
     this.demo = false;
   }
 
+  /** Loads Clerk once, and hands it any auth listeners registered before it arrived. */
+  async ensureClerk() {
+    if (!this.loading) {
+      this.loading = loadClerk(this.publishableKey).then((clerk) => {
+        this.clerk = clerk;
+        let last = clerk.user?.id ?? null;
+        clerk.addListener(({ user }) => {
+          const id = user?.id ?? null;
+          if (id === last) return;
+          last = id;
+          for (const cb of this.authListeners) cb(user ? toUser(user) : null);
+        });
+        return clerk;
+      }).catch((e) => { this.loading = null; throw e; });
+    }
+    return this.loading;
+  }
+
   async getUser() {
-    const { data } = await this.db.auth.getSession();
-    return data.session ? toUser(data.session.user) : null;
+    return this.clerk?.user ? toUser(this.clerk.user) : null;
   }
 
   onAuthChange(cb) {
-    this.db.auth.onAuthStateChange((_event, session) => cb(session ? toUser(session.user) : null));
+    this.authListeners.push(cb);
   }
 
+  // Opens Clerk's sign-in window. Google is the only option, and new visitors get an account
+  // automatically, so it behaves like the old "Continue with Google".
   async signInWithGoogle() {
-    const { error } = await this.db.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: location.origin + location.pathname },
-    });
-    if (error) throw error;
+    const clerk = await this.ensureClerk();
+    clerk.openSignIn({ withSignUp: true, forceRedirectUrl: location.origin + location.pathname + location.hash });
   }
 
   async signOut() {
-    await this.db.auth.signOut();
+    await this.clerk?.signOut();
+  }
+
+  async request(path, payload) {
+    const token = await this.clerk?.session?.getToken();
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data.message || data.error || `Request failed (${res.status})`);
+      err.status = res.status;
+      throw err;
+    }
+    return data;
+  }
+
+  async call(op, ...args) {
+    return (await this.request('/api/store', { op, args })).result;
   }
 
   /** Everything stored about the signed-in user, for "Download my data". */
   async exportData() {
-    const { data: session } = await this.db.auth.getSession();
-    const u = session.session?.user;
-    const [events, notifications] = await Promise.all([
-      this.db.from('events').select('*, recipients(*), gifts(*, price_history(price, source, checked_at))'),
-      this.db.from('notifications').select('*'),
-    ]);
-    if (events.error) throw events.error;
-    if (notifications.error) throw notifications.error;
+    const u = this.clerk?.user;
+    const data = await this.call('exportData');
     return {
-      account: u && { id: u.id, email: u.email, created_at: u.created_at, last_sign_in_at: u.last_sign_in_at, profile: u.user_metadata },
-      events: events.data,
-      notifications: notifications.data,
+      account: u && {
+        id: u.id,
+        email: u.primaryEmailAddress?.emailAddress ?? null,
+        created_at: u.createdAt,
+        last_sign_in_at: u.lastSignInAt,
+        name: u.fullName,
+      },
+      ...data,
     };
   }
 
   /** Permanently deletes the account and all its data (server-side). */
   async deleteAccount() {
-    const { error } = await this.db.functions.invoke('delete-account', { body: { confirm: true } });
-    if (error) throw error;
-    await this.db.auth.signOut({ scope: 'local' });
+    await this.request('/api/delete-account', { confirm: true });
+    await this.clerk?.signOut().catch(() => {});
   }
 
   async listEvents() {
-    const { data, error } = await this.db
-      .from('events')
-      .select('*, recipients(*), gifts(*)')
-      .order('event_date', { ascending: true, nullsFirst: false });
-    if (error) throw error;
-    return data.map(normalizeEvent);
+    return (await this.call('listEvents')).map(normalizeEvent);
   }
 
   async getEvent(id) {
-    const { data, error } = await this.db
-      .from('events')
-      .select('*, recipients(*), gifts(*, price_history(price, checked_at))')
-      .eq('id', id)
-      .maybeSingle();
-    if (error) throw error;
-    return data && normalizeEvent(data);
+    const e = await this.call('getEvent', id);
+    return e && normalizeEvent(e);
   }
 
-  async createEvent(event, recipients) {
-    const { data, error } = await this.db.from('events').insert(event).select().single();
-    if (error) throw error;
-    if (recipients.length) {
-      const rows = recipients.map((r) => ({ ...r, event_id: data.id }));
-      const { error: rErr } = await this.db.from('recipients').insert(rows);
-      if (rErr) throw rErr;
-    }
-    return data;
+  createEvent(event, recipients) {
+    return this.call('createEvent', event, recipients);
   }
 
-  async updateEvent(id, patch) {
-    const { error } = await this.db.from('events').update(patch).eq('id', id);
-    if (error) throw error;
+  updateEvent(id, patch) {
+    return this.call('updateEvent', id, patch);
   }
 
-  async deleteEvent(id) {
-    const { error } = await this.db.from('events').delete().eq('id', id);
-    if (error) throw error;
+  deleteEvent(id) {
+    return this.call('deleteEvent', id);
   }
 
-  async addRecipient(eventId, recipient) {
-    const { error } = await this.db.from('recipients').insert({ ...recipient, event_id: eventId });
-    if (error) throw error;
+  addRecipient(eventId, recipient) {
+    return this.call('addRecipient', eventId, recipient);
   }
 
-  async updateRecipient(id, patch) {
-    const { error } = await this.db.from('recipients').update(patch).eq('id', id);
-    if (error) throw error;
+  updateRecipient(id, patch) {
+    return this.call('updateRecipient', id, patch);
   }
 
-  async deleteRecipient(id) {
-    const { error } = await this.db.from('recipients').delete().eq('id', id);
-    if (error) throw error;
+  deleteRecipient(id) {
+    return this.call('deleteRecipient', id);
   }
 
   async addGift(eventId, gift) {
-    const { data, error } = await this.db
-      .from('gifts')
-      .insert({ ...gift, event_id: eventId })
-      .select()
-      .single();
-    if (error) throw error;
+    const data = await this.call('addGift', eventId, gift);
     // Record a first price point right away so tracking starts now.
     if (data.track_price) await this.checkPrices({ gift_id: data.id }).catch(() => {});
     return data;
   }
 
-  async updateGift(id, patch) {
-    const { error } = await this.db.from('gifts').update(patch).eq('id', id);
-    if (error) throw error;
+  updateGift(id, patch) {
+    return this.call('updateGift', id, patch);
   }
 
-  async deleteGift(id) {
-    const { error } = await this.db.from('gifts').delete().eq('id', id);
-    if (error) throw error;
+  deleteGift(id) {
+    return this.call('deleteGift', id);
   }
 
   async checkPrices(scope) {
-    const { data, error } = await this.db.functions.invoke('check-prices', { body: scope });
-    if (error) {
-      // Non-2xx responses carry the Response in error.context.
-      if (error.context?.status === 429) {
-        throw new Error('You’ve checked prices a lot in the last few minutes. Please try again shortly.');
-      }
-      throw error;
+    try {
+      return await this.request('/api/check-prices', scope ?? {});
+    } catch (err) {
+      if (err.status === 429) throw new Error('You’ve checked prices a lot in the last few minutes. Please try again shortly.');
+      throw err;
     }
-    return data;
   }
 
-  async listNotifications() {
-    const { data, error } = await this.db
-      .from('notifications')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50);
-    if (error) throw error;
-    return data;
+  listNotifications() {
+    return this.call('listNotifications');
   }
 
   async markNotificationsRead(ids) {
     if (!ids.length) return;
-    const { error } = await this.db.from('notifications').update({ read: true }).in('id', ids);
-    if (error) throw error;
+    await this.call('markNotificationsRead', ids);
   }
 }
 
 function toUser(u) {
-  const meta = u.user_metadata ?? {};
+  const email = u.primaryEmailAddress?.emailAddress ?? '';
   return {
     id: u.id,
-    email: u.email,
-    name: meta.full_name || meta.name || u.email,
-    avatar: meta.avatar_url || meta.picture || null,
-    provider: u.app_metadata?.provider ?? 'google',
-    created_at: u.created_at,
+    email,
+    name: u.fullName || email,
+    avatar: null, // the profile photo is never loaded; the app shows initials
+    provider: 'google',
+    created_at: u.createdAt ? new Date(u.createdAt).toISOString() : null,
   };
 }
 
@@ -282,7 +301,7 @@ class LocalStore {
     for (const cb of this.listeners) cb(this.data.user);
   }
 
-  // In local development (no Supabase), "Continue with Google" starts the demo.
+  // In local development (no Clerk key), "Continue with Google" starts the demo.
   async signInWithGoogle() {
     await this.startDemo();
   }

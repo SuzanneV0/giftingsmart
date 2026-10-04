@@ -1,6 +1,6 @@
 import { createStore, enterDemo, exitDemo } from './store.js';
 import * as B from './budget.js';
-import { isOnSale } from '../supabase/functions/_shared/pricing.js';
+import { isOnSale } from '../shared/pricing.js';
 
 const app = document.getElementById('app');
 const nav = document.getElementById('nav');
@@ -448,7 +448,7 @@ function loginPage() {
       </button>
       ${
         store.demo
-          ? `<p class="demo-note">Demo mode: Supabase isn't connected yet, so this signs you in as a demo user and keeps
+          ? `<p class="demo-note">Demo mode: sign-in isn't connected yet, so this signs you in as a demo user and keeps
              data in this browser only. See the README to turn on real Google sign-in.</p>`
           : `<div class="or"><span>or</span></div>
              <button type="button" class="btn ghost lg demo-btn" data-start-demo>Try the demo</button>
@@ -461,12 +461,15 @@ function loginPage() {
 
 function mountLogin(root) {
   root.querySelector('#google').addEventListener('click', async (e) => {
-    e.currentTarget.disabled = true;
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try {
       await store.signInWithGoogle();
     } catch (err) {
-      e.currentTarget.disabled = false;
       fail(err);
+    } finally {
+      // The sign-in window opens over the page; if it's closed, the button should work again.
+      btn.disabled = false;
     }
   });
 }
@@ -1356,9 +1359,6 @@ async function render() {
 async function init() {
   store = await createStore(window.GIFT_CONFIG ?? {});
   user = await store.getUser();
-
-  // Clean the OAuth ?code= off the URL once Supabase has used it.
-  if (new URLSearchParams(location.search).has('code')) history.replaceState(null, '', location.pathname + location.hash);
 
   store.onAuthChange(async (u) => {
     const was = user?.id;

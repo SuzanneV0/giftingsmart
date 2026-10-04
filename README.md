@@ -13,7 +13,7 @@ Keep gift-giving on budget for any occasion: birthdays, holidays, baby showers, 
 - A progress bar at the top of each event shows spent / still on the list / budget
 - Warnings before a purchase takes you near (90%) or over budget, and when your whole list would go over
 
-Plain HTML/CSS/JS, plus [Supabase](https://supabase.com) for Google sign-in, the database and the scheduled price checker, hosted on Vercel.
+Plain HTML/CSS/JS on Vercel, with [Clerk](https://clerk.com) for Google sign-in, a [Turso](https://turso.tech) database, and a few Vercel Functions for the API and the scheduled price checker.
 
 **Live:** [giftingsmart.shop](https://giftingsmart.shop). Use **Try the demo** to explore with sample data, no account needed.
 
@@ -27,34 +27,33 @@ flowchart LR
     UI["app.js<br/>router + pages"] --> Store{"store.js<br/>one data interface"}
     Store -->|demo| Local["LocalStore<br/>localStorage"]
   end
-  Store -->|signed in| Auth["Supabase Auth<br/>Google OAuth, PKCE"]
-  Store -->|REST| DB[("Postgres<br/>row-level security")]
-  Store -->|"Check prices now"| Fn["Edge Function<br/>check-prices"]
-  Cron["pg_cron<br/>every 6 hours"] -->|Vault secret| Fn
-  Fn --> Provider["Price provider<br/>(mock today)"]
-  Fn --> DB
+  Store -->|"sign in (loaded on demand)"| Auth["Clerk<br/>Google sign-in"]
+  Store -->|"session token"| API["Vercel Functions<br/>api/store, api/check-prices"]
+  API -->|"verifies token,<br/>scopes to user"| DB[("Turso<br/>libSQL")]
+  Cron["cron-job.org<br/>every 6 hours"] -->|secret header| API
+  API --> Provider["Price provider<br/>(mock today)"]
 ```
 
 | Layer | Technology |
 |---|---|
-| Front end | Plain HTML, CSS and JavaScript (ES modules). No framework or bundler; the only library is a self-hosted copy of supabase-js |
-| Database and auth | Supabase: Postgres with row-level security, Google sign-in, Vault for secrets |
-| Server code | Supabase Edge Functions (Deno, TypeScript) |
-| Scheduling | `pg_cron` + `pg_net`, calling the price checker every 6 hours |
+| Front end | Plain HTML, CSS and JavaScript (ES modules). No framework or bundler |
+| Sign-in | Clerk (Google only), loaded only when someone signs in or is already signed in |
+| API | Vercel Functions (Node) in `api/`: the data API, the price checker and account deletion |
+| Database | Turso (libSQL/SQLite). Tables are created on first use |
+| Scheduling | cron-job.org calls the price checker every 6 hours with a shared secret |
 | Hosting | Vercel with a custom domain; a small Node build script generates the info pages, sitemap and config |
 
 **Lighthouse** (October 2026, live site): 100 for performance, accessibility, best practices and SEO, on both mobile and desktop.
 
 ### Key decisions
 
-- **One data interface, two implementations.** `SupabaseStore` and `LocalStore` expose the same async API, so the whole UI runs unchanged against the real database or against `localStorage`. That one choice gives local development with no setup and the no-account **Try the demo** mode on the live site.
-- **Security lives in the database.** Every table has row-level security tied to `auth.uid()`; a trigger stops gifts and people being attached to someone else's event; table grants follow least privilege, and tables the browser shouldn't see have no policies at all. Rules were verified by impersonating the `anon` and `authenticated` roles inside rolled-back transactions (see `docs/privacy-audit.md`).
-- **Shared pricing logic.** Sale detection and the simulated price model live in one plain ES module (`_shared/pricing.js`) that runs both in the Deno Edge Function and in the browser's demo mode. A drop counts as a sale only if it's at least 5% below the last price *and* the lowest in 30 days, which avoids alerting on noise.
-- **Pluggable price providers.** The checker talks to a `PriceProvider` interface. The current `mock` provider produces deterministic, realistic price movement; a real API (Keepa, SerpApi, …) is one file plus a secret.
-- **No hand-copied secrets for the cron job.** A migration generates a random secret in Supabase Vault; the scheduled job sends it, and a `security definer` database function verifies it. Nothing has to be pasted between dashboards.
-- **Rate limiting in Postgres.** User-triggered price checks are limited to 20 per 10 minutes per account by a database function that takes a per-user advisory lock, so concurrent requests can't slip past the count.
-- **Privacy by design.** No ads; Google Analytics only loads after a visitor accepts the cookie banner, and page views are anonymised (generic titles, no IDs). Fonts and the Supabase client are self-hosted, so visitors' browsers contact only this site and Supabase. The Google profile photo is never loaded (initials instead). Users can download all their data or delete their account, which cascades through every table.
-- **Strict browser security.** A Content Security Policy allows scripts, fonts and images from this site only and network calls to Supabase only; all user text is escaped before rendering, and gift links must be `http(s)`. The Edge Functions reject browser requests from other websites.
+- **One data interface, two implementations.** `ServerStore` and `LocalStore` expose the same async API, so the whole UI runs unchanged against the real database or against `localStorage`. That one choice gives local development with no setup and the no-account **Try the demo** mode on the live site.
+- **Every request is checked on the server.** The browser never talks to the database. Each API call carries the Clerk session token; the function verifies it, then scopes every query to that user's rows. Writes accept only known columns, a gift's person must belong to the same event, and `tests/api-store.test.mjs` checks that one user can't read, change or delete another's data.
+- **Shared pricing logic.** Sale detection and the simulated price model live in one plain ES module (`shared/pricing.js`) that runs both in the price-checker function and in the browser's demo mode. A drop counts as a sale only if it's at least 5% below the last price *and* the lowest in 30 days, which avoids alerting on noise.
+- **Pluggable price providers.** The checker talks to a provider interface (`api/_providers.js`). The current `mock` provider produces deterministic, realistic price movement; a real API (Keepa, SerpApi, …) is one object plus a setting.
+- **Rate limiting.** User-triggered price checks are limited to 20 per 10 minutes per account; the check and the insert happen in one transaction, so concurrent requests can't slip past the count.
+- **Privacy by design.** No ads; Google Analytics only loads after a visitor accepts the cookie banner, and page views are anonymised (generic titles, no IDs). Fonts are self-hosted, and Clerk's script is only loaded for someone signing in or already signed in, so other visitors' browsers contact only this site. The database stores a Clerk user ID, never a name or email. The Google profile photo is never loaded (initials instead). Users can download all their data or delete their account, which removes every row and the Clerk account.
+- **Strict browser security.** A Content Security Policy allows scripts and network calls to this site and Clerk only (plus analytics after consent); all user text is escaped before rendering, gift links must be `http(s)`, and the API rejects browser requests from other websites.
 - **Accessible and responsive.** Semantic HTML, focus moved to new content on each page change, live-region announcements for budget warnings, a keyboard-friendly hamburger menu below 1024px, light/dark themes (system default or manual, with no flash on load), and colour pairs checked against WCAG AA contrast.
 - **Inclusive by default.** Occasion suggestions span many traditions (Hanukkah, Eid, Diwali, Lunar New Year, Vaisakhi, Nowruz and more), each labelled with the year it next occurs.
 
@@ -64,23 +63,23 @@ flowchart LR
 |---|---|
 | [`js/budget.js`](js/budget.js) | Pure budget maths: per-event and per-person budgets, and the "this purchase would put you over" warnings |
 | [`js/store.js`](js/store.js) | The shared data interface and its two implementations |
-| [`supabase/functions/_shared/pricing.js`](supabase/functions/_shared/pricing.js) | Deterministic price simulation and the sale-detection rule |
-| [`supabase/functions/check-prices/index.ts`](supabase/functions/check-prices/index.ts) | Two auth paths (user token or cron secret), rate limit, provider calls, alerts |
-| [`supabase/migrations/`](supabase/migrations/) | Schema, row-level security, cron schedule, rate limiting and the security hardening |
+| [`shared/pricing.js`](shared/pricing.js) | Deterministic price simulation and the sale-detection rule |
+| [`api/check-prices.js`](api/check-prices.js) | Two auth paths (user token or cron secret), rate limit, provider calls, alerts |
+| [`api/store.js`](api/store.js) | The data API: every operation scoped to the signed-in user, with per-table allowed columns |
 | [`scripts/build.mjs`](scripts/build.mjs) | Build step that generates pages and refuses to publish secret keys |
-| [`tests/`](tests/) | 26 unit tests for the budget maths and the sale-detection rules, run by GitHub Actions on every push |
+| [`tests/`](tests/) | 34 tests: budget maths, sale-detection rules, and the data API's per-user isolation, run by GitHub Actions on every push |
 | [`docs/privacy-audit.md`](docs/privacy-audit.md) | Privacy audit and security review, with findings and fixes |
 
 ### What I'd add next
 
 - End-to-end tests with Playwright for the main flows (create event, add gift, mark bought, over-budget warning), alongside the existing unit tests.
 - A real price provider, with per-store parsing and caching.
-- Email alerts for sales, sent from the Edge Function.
+- Email alerts for sales, sent from the price checker.
 - Shared events, so a family can plan one gift list together.
 
 ## Demo for visitors
 
-The live site has a **Try the demo** button (home page, login page and menu). It runs the app on sample data kept only in the visitor's browser (no account, nothing sent to Supabase) and shows a banner with an **Exit demo** link. Prices throughout are simulated by the `mock` price provider, and the site says so in the footer, on event pages, the About page and the Terms.
+The live site has a **Try the demo** button (home page, login page and menu). It runs the app on sample data kept only in the visitor's browser (no account, nothing sent to the server) and shows a banner with an **Exit demo** link. Prices throughout are simulated by the `mock` price provider, and the site says so in the footer, on event pages, the About page and the Terms.
 
 ## Run it locally
 
@@ -88,10 +87,11 @@ The live site has a **Try the demo** button (home page, login page and menu). It
 python -m http.server 5173
 ```
 
-Run the tests (Node 22.12 or later, no install needed):
+Run the tests (Node 22.12 or later):
 
 ```bash
-node --test "tests/*.test.mjs"
+npm install
+npm test
 ```
 
 Open http://localhost:5173. With `config.js` left empty, the app runs in **demo mode**: "Continue with Google" signs you in as a demo user, data stays in your browser, and sample events are created. "Check prices now" moves a simulated clock forward six hours so you can watch prices move and sale alerts appear.
@@ -102,56 +102,51 @@ Open http://localhost:5173. With `config.js` left empty, the app runs in **demo 
 | --- | --- |
 | `index.html`, `styles.css`, `icon.svg` | Page shell, SEO tags and styles (light and dark) |
 | `theme.js` | Applies the saved light/dark choice before the page draws |
-| `config.js` | Supabase URL and anon key (both public); filled in at build time on Vercel |
+| `config.js` | Clerk publishable key (public); filled in at build time on Vercel |
 | `pages/` | Content for the About, Privacy, Cookies, Terms and Legal pages |
 | `scripts/build.mjs` | Vercel build: copies the site to `dist/`, generates the info pages and sitemap, writes `config.js`. **Set your name, contact email and province in `SITE` here.** |
 | `scripts/screenshot.mjs` | Re-captures `docs/screenshot.png` from the demo in a separate headless Chrome |
 | `scripts/render-images.sh` | Re-renders `og-image.png` and `apple-touch-icon.png` from the HTML sources beside it |
-| `fonts/`, `vendor/` | Self-hosted fonts and supabase-js (with their licences), so visitors never contact third parties |
+| `fonts/` | Self-hosted fonts (with their licences), so visitors never contact third parties |
 | `docs/privacy-audit.md` | Privacy audit, security review and action items |
 | `tests/`, `.github/workflows/ci.yml` | Unit tests (Node's built-in test runner) and the CI workflow that runs them, syntax-checks the scripts and runs the build |
 | `manifest.webmanifest`, `icon-*.png` | Lets visitors add GiftingSmart to their home screen |
 | `js/app.js` | Router and pages: home, log in, my account, my events, new event, event |
-| `js/store.js` | Data layer: `SupabaseStore` (real) and `LocalStore` (demo) |
+| `js/store.js` | Data layer: `ServerStore` (real, Clerk + API) and `LocalStore` (demo) |
 | `js/budget.js` | Budget maths and over-budget warnings |
-| `supabase/migrations/` | Tables with row-level security, plus the 6-hourly cron job |
-| `supabase/functions/check-prices/` | Edge Function that records prices and creates sale alerts |
-| `supabase/functions/_shared/cors.ts` | Which websites may call the functions from a browser (`ALLOWED_ORIGINS` secret overrides the default) |
-| `supabase/functions/delete-account/` | Edge Function that deletes the signed-in user's account and all their data |
-| `supabase/functions/_shared/pricing.js` | Sale detection and the mock price provider (shared by server and browser) |
+| `api/_lib.js` | Database connection and schema, Clerk session check, shared helpers |
+| `api/store.js` | Data API used by the app (events, people, gifts, alerts, export) |
+| `api/check-prices.js` | Records prices and creates sale alerts (signed-in user, or cron-job.org with the secret) |
+| `api/delete-account.js` | Deletes the signed-in user's data and their Clerk account |
+| `api/_providers.js` | Price providers (`mock` today) |
+| `shared/pricing.js` | Sale detection and the mock price model (shared by server and browser) |
 
-## Connect Supabase and Google sign-in
+## Connect sign-in and the database
 
-The live setup: Vercel project **gift-budget** is linked to Supabase project **GiftingSmart** through the Vercel Supabase integration.
-
-1. **Supabase ↔ Vercel**: install the Supabase integration on the Vercel project. It adds `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and friends to the project's environment variables. On each deploy, `scripts/build.mjs` copies the site into `dist/` and writes those two public values into its `config.js` (never the secret or service role keys). Without them, the build keeps the demo-mode `config.js`.
-2. **Google OAuth client**: in [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create an OAuth client ID (type "Web application").
-   - Authorized redirect URI: `https://<project-ref>.supabase.co/auth/v1/callback`
-   - Configure the OAuth consent screen (app name, support email).
-3. In Supabase, go to **Authentication → Sign In / Providers → Google**, enable it, and paste the client ID and secret.
-4. In **Authentication → URL Configuration**, set the Site URL to the production URL (`https://giftingsmart.shop`) and add `http://localhost:5173` to the redirect URLs.
-5. **Database**: apply the migrations (`supabase link --project-ref <project-ref>` then `supabase db push`, or paste them into the SQL editor). The schedule migration creates a random `cron_secret` in Vault. Then store the project URL in Vault so the cron job knows where to call:
-   ```sql
-   select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
-   ```
-6. **Price checker**: `supabase functions deploy check-prices --no-verify-jwt`. It checks its own auth: either a signed-in user's token, or the cron secret, which the database verifies. Optionally `supabase secrets set PRICE_PROVIDER=<name>` (default `mock`).
-7. **Local development against Supabase** (optional): put the project URL and publishable key in `config.js`, but don't commit them. Without them the app runs in demo mode.
+1. **Clerk**: create an application with **Google** as the only sign-in option. Copy its publishable key (`pk_…`) and secret key (`sk_…`).
+2. **Turso**: create a database and an auth token. The tables are created automatically on first use.
+3. **Vercel settings** (Settings → Environment Variables):
+   - `CLERK_PUBLISHABLE_KEY`: written into `config.js` at build time (public by design; the build refuses a secret key)
+   - `CLERK_SECRET_KEY`, `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`: used only by the functions in `api/`
+   - `CRON_SECRET`: a long random string shared with cron-job.org
+   - `PRICE_PROVIDER` (optional, default `mock`)
+4. **Scheduled price checks**: in [cron-job.org](https://cron-job.org), create a job that sends `POST https://giftingsmart.shop/api/check-prices` every 6 hours with the header `x-cron-secret: <CRON_SECRET>`.
+5. **Local development**: with `config.js` left empty the app runs in demo mode. To run against the real API, use `npx vercel dev` with the settings above in `.env.local`.
 
 ## Plugging in a real price API
 
 Prices come from `PRICE_PROVIDER` (default `mock`, which simulates realistic prices and sales). To use a real source such as Keepa (Amazon), SerpApi (Google Shopping) or Rainforest:
 
-1. Add `supabase/functions/check-prices/providers/<name>.ts` that implements `PriceProvider.getPrice(gift)`, using `gift.url` and/or `gift.name` and returning `{ price, source }` (or `null` if not found).
-2. Register it in `providers/index.ts`.
-3. `supabase secrets set PRICE_PROVIDER=<name> <NAME>_API_KEY=...` and redeploy the function.
+1. Add a provider to `api/_providers.js` with an async `getPrice(gift)` that uses `gift.url` and/or `gift.name` and returns `{ price, source }` (or `null` if not found).
+2. Set `PRICE_PROVIDER=<name>` and the provider's API key in Vercel's settings, then redeploy.
 
-Sale rules live in `_shared/pricing.js`: an alert fires when the price drops at least 5% from the last check **and** is the lowest in 30 days, or when it crosses your target price.
+Sale rules live in `shared/pricing.js`: an alert fires when the price drops at least 5% from the last check **and** is the lowest in 30 days, or when it crosses your target price.
 
 ## Deploy
 
-Import the repo in Vercel (framework "Other"; `vercel.json` sets the build command and output directory). Only the files listed in `scripts/build.mjs` are published; `vercel.json` also sets security headers. Add the production URL to Supabase's redirect URLs.
+Import the repo in Vercel (framework "Other"; `vercel.json` sets the build command and output directory). Only the files listed in `scripts/build.mjs` are published, plus the functions in `api/`; `vercel.json` also sets security headers.
 
 ## Notes and next steps
 
-- Alerts appear in the app (bell icon) and, if enabled under My account, as browser notifications while the app is open. Email or push alerts would be a natural next step (e.g. sending from the Edge Function).
+- Alerts appear in the app (bell icon) and, if enabled under My account, as browser notifications while the app is open. Email or push alerts would be a natural next step (e.g. sending from the price checker).
 - Prices are checked every 6 hours and may not match the store at checkout.

@@ -1,5 +1,7 @@
 # Privacy audit: GiftingSmart
 
+> **Update, October 4, 2026:** GiftingSmart has since moved off Supabase. Sign-in is now Clerk (Google only, loaded only when someone signs in or is already signed in), data is in a Turso database behind the app's own API, and the price checker runs as a Vercel Function triggered by cron-job.org. The findings below describe the Supabase setup as audited on October 1; the current setup is in the README and the privacy policy.
+
 **Date:** October 1, 2026
 **Scope:** the live site (giftingsmart.shop, formerly gift-budget.vercel.app), the browser code, the Supabase project *GiftingSmart* (database, auth, Edge Functions, cron) and the Vercel project *gift-budget*.
 **Framework:** Canada's PIPEDA fair information principles, plus general good practice (GDPR-style data minimisation and user rights).

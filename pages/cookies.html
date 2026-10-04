@@ -27,6 +27,21 @@
     policy</a>, and our account has Google's advertising features turned off. Choosing <b>Decline</b> later removes these
     cookies.</p>
 
+  <h2>Sign-in cookies</h2>
+  <p>When you sign in, our sign-in provider, Clerk, sets these essential cookies. They're only used to keep you signed in
+    securely, never for tracking or advertising, so they don't need your consent.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Purpose</th><th>How long</th></tr></thead>
+      <tbody>
+        <tr><td><code>__session</code></td><td>A short-lived token that proves you're signed in. It's renewed automatically.</td><td>About a minute at a time</td></tr>
+        <tr><td><code>__client_uat</code></td><td>Records when you last signed in or out, so the app knows whether to check your session.</td><td>Until you sign out</td></tr>
+        <tr><td><code>__client</code> (on Clerk's domain)</td><td>Keeps your sign-in with Clerk, so you don't have to sign in on every visit.</td><td>Until you sign out</td></tr>
+        <tr><td><code>__clerk_db_jwt</code></td><td>Used only while the site runs on Clerk's development setup, to link this browser to your sign-in.</td><td>Until you sign out</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <h2>What the app stores in your browser</h2>
   <p>Local storage is a small storage area in your browser that only this website can read. Nothing below is shared with other
     websites or used to track you.</p>
@@ -34,8 +49,6 @@
     <table>
       <thead><tr><th>Name</th><th>Purpose</th><th>How long</th></tr></thead>
       <tbody>
-        <tr><td><code>sb-…-auth-token</code></td><td>Keeps you signed in (set by our sign-in provider, Supabase).</td><td>Until you sign out</td></tr>
-        <tr><td><code>sb-…-auth-token-code-verifier</code></td><td>A one-time security code used while you sign in with Google.</td><td>Removed once sign-in completes</td></tr>
         <tr><td><code>giftbudget-theme</code></td><td>Your light or dark mode choice, if you've made one.</td><td>Until you change it</td></tr>
         <tr><td><code>giftbudget-currency</code></td><td>The currency you chose for showing amounts.</td><td>Until you change it</td></tr>
         <tr><td><code>giftbudget-browser-alerts</code></td><td>Whether you turned on browser notifications for price drops.</td><td>Until you change it</td></tr>

@@ -9,7 +9,7 @@
     <ul>
       <li>We collect only what the app needs: your Google name and email, and the events, people, gifts and budgets you enter.</li>
       <li>No ads. Google Analytics runs only if you accept it on the cookie banner, and you can change your mind any time. We never sell or rent your data.</li>
-      <li>Your data is stored with Supabase and served by Vercel, in the United States.</li>
+      <li>Sign-in is handled by Clerk, your lists are stored with Turso, and the site is served by Vercel, all in the United States.</li>
       <li>You can download everything or delete your account at any time from <a href="/#/account">My account</a>.</li>
     </ul>
   </div>
@@ -24,7 +24,9 @@
   <h3>When you sign in with Google</h3>
   <ul>
     <li>Your name, email address and Google account ID.</li>
-    <li>Google also sends a link to your profile picture. It's stored with your account record by our sign-in provider, but the app
+    <li>These are held by our sign-in provider, Clerk. GiftingSmart's own database stores only an account ID, plus the events,
+      people and gifts you enter; your name and email aren't copied into it.</li>
+    <li>Google also sends a link to your profile picture. It's stored with your account record by Clerk, but the app
       never displays or loads it; we show your initial instead.</li>
     <li>We ask Google only for basic profile and email access. We can't see your Gmail, contacts, calendar or anything else in
       your Google account, and we never post on your behalf.</li>
@@ -71,8 +73,10 @@
     <table>
       <thead><tr><th>Provider</th><th>What they do</th><th>Where</th></tr></thead>
       <tbody>
-        <tr><td>Supabase</td><td>Sign-in, database and the scheduled price checker</td><td>United States (AWS, us-east-1)</td></tr>
-        <tr><td>Vercel</td><td>Hosts and delivers the website</td><td>United States, with a global delivery network</td></tr>
+        <tr><td>Clerk</td><td>Sign-in and your account record (name, email, Google account ID)</td><td>United States</td></tr>
+        <tr><td>Turso</td><td>Database for your events, people, gifts, price history and alerts</td><td>United States</td></tr>
+        <tr><td>Vercel</td><td>Hosts the website and runs the app's server code, including the scheduled price checker</td><td>United States, with a global delivery network</td></tr>
+        <tr><td>cron-job.org</td><td>Triggers the price checker every six hours (it sees no personal information)</td><td>Germany</td></tr>
         <tr><td>Google</td><td>"Sign in with Google" (only when you choose to sign in)</td><td>Global</td></tr>
         <tr><td>Google Analytics</td><td>Usage statistics (only if you accept analytics cookies)</td><td>United States</td></tr>
       </tbody>

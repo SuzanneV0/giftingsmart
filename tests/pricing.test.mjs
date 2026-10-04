@@ -1,7 +1,7 @@
-// Unit tests for the shared price logic (supabase/functions/_shared/pricing.js).
+// Unit tests for the shared price logic (shared/pricing.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectAlert, isOnSale, mockPrice, round2 } from '../supabase/functions/_shared/pricing.js';
+import { detectAlert, isOnSale, mockPrice, round2 } from '../shared/pricing.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 1, 12);

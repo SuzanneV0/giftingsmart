@@ -1,10 +1,10 @@
 // Vercel build: copies the static site into dist/, generates the info pages
 // (about, privacy, cookies, terms, legal) and the sitemap, and writes
-// dist/config.js from the environment variables added by the Vercel Supabase
-// integration. Only the project URL and the publishable (anon) key are used.
-// Both are public by design; never put the service role or secret key here,
-// since config.js is served to every visitor. Without the variables
-// (previews, local builds), the repo's demo-mode config.js is used as is.
+// dist/config.js with the Clerk publishable key from CLERK_PUBLISHABLE_KEY.
+// That key is public by design; never put the secret key here, since
+// config.js is served to every visitor. Without the variable (local builds),
+// the repo's demo-mode config.js is used as is. The API in api/ is deployed
+// by Vercel separately and reads its own settings.
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 // Site owner details used on the info pages. Empty values show as a
@@ -14,7 +14,7 @@ const SITE = {
   operator: 'GiftingSmart',
   email: 'giftingsmartshopper@gmail.com',
   province: 'Ontario',
-  updated: 'October 1, 2026', // change when a policy changes
+  updated: 'October 4, 2026', // change when a policy changes
 };
 
 const PAGES = ['about', 'privacy', 'cookies', 'terms', 'legal'];
@@ -23,7 +23,7 @@ const OUT = 'dist';
 const FILES = [
   'index.html', 'styles.css', 'icon.svg', 'config.js', 'theme.js', 'analytics.js', 'robots.txt', 'og-image.png', 'apple-touch-icon.png',
   'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png',
-  'js', 'fonts', 'vendor', 'supabase/functions/_shared/pricing.js',
+  'js', 'fonts', 'shared/pricing.js',
 ];
 
 // Empty dist/ rather than deleting it (a local server may be running inside it).
@@ -117,31 +117,20 @@ ${['', ...PAGES].map((p) => `  <url><loc>${SITE.url}/${p}</loc><lastmod>${today}
 
 // ---------------------------------------------------------------- config.js
 
-const env = process.env;
-const url = env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || '';
-const key =
-  env.SUPABASE_PUBLISHABLE_KEY ||
-  env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  env.SUPABASE_ANON_KEY ||
-  env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  '';
+const key = process.env.CLERK_PUBLISHABLE_KEY || '';
 
-if (!url || !key) {
-  console.log('build: Supabase variables not set, using demo-mode config.js');
+if (!key) {
+  console.log('build: CLERK_PUBLISHABLE_KEY not set, using demo-mode config.js');
   process.exit(0);
 }
-if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url)) {
-  console.error(`build: unexpected SUPABASE_URL "${url}"`);
-  process.exit(1);
-}
-if (key.startsWith('sb_secret_') || /service_role/.test(Buffer.from(key.split('.')[1] ?? '', 'base64').toString())) {
-  console.error('build: refusing to publish a secret / service role key');
+if (!/^pk_(test|live)_[A-Za-z0-9+/=_-]+$/.test(key)) {
+  console.error('build: CLERK_PUBLISHABLE_KEY must be a publishable key (pk_test_… or pk_live_…), never the secret key');
   process.exit(1);
 }
 
 writeFileSync(
   `${OUT}/config.js`,
   `// Generated at build time by scripts/build.mjs. Do not edit.\n` +
-    `window.GIFT_CONFIG = ${JSON.stringify({ supabaseUrl: url, supabaseAnonKey: key }, null, 2)};\n`,
+    `window.GIFT_CONFIG = ${JSON.stringify({ clerkPublishableKey: key }, null, 2)};\n`,
 );
-console.log(`build: connected to ${url}`);
+console.log('build: sign-in connected (Clerk)');

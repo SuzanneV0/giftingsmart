@@ -1,4 +1,4 @@
-// Price logic shared by the check-prices Edge Function (Deno) and the
+// Price logic shared by the check-prices API function (api/check-prices.js) and the
 // in-browser demo mode. Plain ES module, no dependencies.
 
 const SIX_HOURS = 6 * 60 * 60 * 1000;
