@@ -1,6 +1,10 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "node scripts/build.mjs",
   "outputDirectory": "dist",
+  "regions": [
+    "yul1"
+  ],
   "cleanUrls": true,
   "headers": [
     {

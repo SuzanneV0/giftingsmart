@@ -9,7 +9,7 @@
     <ul>
       <li>We collect only what the app needs: your Google name and email, and the events, people, gifts and budgets you enter.</li>
       <li>No ads. Google Analytics runs only if you accept it on the cookie banner, and you can change your mind any time. We never sell or rent your data.</li>
-      <li>Sign-in is handled by Clerk, your lists are stored with Turso, and the site is served by Vercel, all in the United States.</li>
+      <li>Your events, people, gifts and alerts are stored and processed in Canada (Montréal). Your sign-in details (name, email, Google account ID) are held by Clerk in the United States.</li>
       <li>You can download everything or delete your account at any time from <a href="/#/account">My account</a>.</li>
     </ul>
   </div>
@@ -74,8 +74,9 @@
       <thead><tr><th>Provider</th><th>What they do</th><th>Where</th></tr></thead>
       <tbody>
         <tr><td>Clerk</td><td>Sign-in and your account record (name, email, Google account ID)</td><td>United States</td></tr>
-        <tr><td>Turso</td><td>Database for your events, people, gifts, price history and alerts</td><td>United States</td></tr>
-        <tr><td>Vercel</td><td>Hosts the website and runs the app's server code, including the scheduled price checker</td><td>United States, with a global delivery network</td></tr>
+        <tr><td>Turso</td><td>Database for your events, people, gifts, price history and alerts</td><td>Canada (Montréal)</td></tr>
+        <tr><td>Vercel</td><td>Runs the app's server code, including the scheduled price checker</td><td>Canada (Montréal)</td></tr>
+        <tr><td>Vercel</td><td>Delivers the website's pages and files</td><td>Global delivery network, operated from the United States</td></tr>
         <tr><td>cron-job.org</td><td>Triggers the price checker every six hours (it sees no personal information)</td><td>Germany</td></tr>
         <tr><td>Google</td><td>"Sign in with Google" (only when you choose to sign in)</td><td>Global</td></tr>
         <tr><td>Google Analytics</td><td>Usage statistics (only if you accept analytics cookies)</td><td>United States</td></tr>
@@ -85,8 +86,12 @@
   <p>We may also disclose information if the law requires it, for example in response to a valid court order.</p>
 
   <h2>Where your data is stored</h2>
-  <p>Your information is stored and processed in the United States. While it's there, it may be accessible to US courts and
-    authorities under US law. By using GiftingSmart, you understand that your information will be transferred outside Canada.</p>
+  <p>The events, people, gifts, price history and alerts you create are stored in a database in Canada (Montréal), and the
+    app's server code that reads and changes them also runs in Montréal.</p>
+  <p>Your sign-in details (name, email address and Google account ID) are held by our sign-in provider, Clerk, in the United
+    States, and the website's pages are delivered through Vercel's global network. While information is in the United States,
+    it may be accessible to US courts and authorities under US law. By using GiftingSmart, you understand that your sign-in
+    details will be transferred outside Canada.</p>
 
   <h2>How long we keep it</h2>
   <ul>

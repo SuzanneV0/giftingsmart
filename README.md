@@ -38,8 +38,8 @@ flowchart LR
 |---|---|
 | Front end | Plain HTML, CSS and JavaScript (ES modules). No framework or bundler |
 | Sign-in | Clerk (Google only), loaded only when someone signs in or is already signed in |
-| API | Vercel Functions (Node) in `api/`: the data API, the price checker and account deletion |
-| Database | Turso (libSQL/SQLite). Tables are created on first use |
+| API | Vercel Functions (Node) in `api/`, running in Montréal (`yul1`, set in `vercel.json`) next to the database: the data API, the price checker and account deletion |
+| Database | Turso (libSQL/SQLite) in Canada. Tables are created on first use |
 | Scheduling | cron-job.org calls the price checker every 6 hours with a shared secret |
 | Hosting | Vercel with a custom domain; a small Node build script generates the info pages, sitemap and config |
 
