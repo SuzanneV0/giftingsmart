@@ -35,7 +35,8 @@
   <ul>
     <li>Events (name, date, notes), budgets, and the people you're buying for (a name and an optional budget).</li>
     <li>Gift ideas: names, store links, prices, target prices, and what you paid.</li>
-    <li>Your settings, such as currency, appearance and alert preferences. These stay in your browser.</li>
+    <li>Your settings, such as currency, appearance and browser notification preferences. These stay in your browser. Whether
+      you want email alerts is saved with your account.</li>
   </ul>
   <h3>Created by the app</h3>
   <ul>
@@ -58,7 +59,8 @@
   <ul>
     <li>To sign you in and keep your account secure.</li>
     <li>To store and show your events, gift lists, budgets and spending.</li>
-    <li>To check prices for gifts you track and alert you to sales and target prices.</li>
+    <li>To check prices for gifts you track and alert you to sales and target prices, in the app and, if you turn it on, by
+      email.</li>
     <li>To keep the service working, prevent abuse and fix problems.</li>
     <li>To respond when you contact us.</li>
     <li>If you accept analytics cookies, to understand how the site is used so we can improve it.</li>
@@ -80,6 +82,7 @@
         <tr><td>cron-job.org</td><td>Triggers the price checker every six hours (it sees no personal information)</td><td>Germany</td></tr>
         <tr><td>Google</td><td>"Sign in with Google" (only when you choose to sign in)</td><td>Global</td></tr>
         <tr><td>Google Analytics</td><td>Usage statistics (only if you accept analytics cookies)</td><td>United States</td></tr>
+        {{provider_rows}}
       </tbody>
     </table>
   </div>
@@ -96,6 +99,8 @@
   <h2>How long we keep it</h2>
   <ul>
     <li>Your account and everything in it are kept until you delete them. Deleting an event, person or gift removes it right away.</li>
+    <li>Price history for a gift you marked as bought is deleted automatically 12 months after you bought it (the gift itself
+      and what you paid stay until you delete them).</li>
     <li>When you delete your account, your account, events, people, gifts, price history and alerts are deleted immediately and
       permanently. Encrypted backups kept by our database provider are overwritten within their normal backup cycle.</li>
     <li>Server logs are kept for a limited period by our providers, typically up to 30 days.</li>

@@ -1,10 +1,10 @@
-# Server-side code and docs aren't needed by the build (scripts/build.mjs
-# copies only the site files into dist/).
-supabase/migrations
-supabase/config.toml
-supabase/functions/check-prices
+# Docs and tests aren't needed by the build (scripts/build.mjs copies only the site files into dist/).
 README.md
 .claude
 docs
 tests
+e2e
+playwright.config.mjs
+test-results
+playwright-report
 .github

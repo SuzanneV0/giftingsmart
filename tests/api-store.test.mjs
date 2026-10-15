@@ -1,5 +1,5 @@
 // Tests for the data API (api/store.js) against a throwaway SQLite file, run with: npm test
-// They check the job row-level security used to do: every user only ever sees and changes their own rows.
+// They check that every user only ever sees and changes their own rows.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -11,6 +11,7 @@ process.env.TURSO_DATABASE_URL = `file:${join(dir, 'test.db')}`;
 
 const { database } = await import('../api/_lib.js');
 const { ops } = await import('../api/store.js');
+const { pruneOldData, HISTORY_RETENTION_DAYS } = await import('../api/check-prices.js');
 
 let db;
 const ALICE = 'user_alice';
@@ -115,5 +116,52 @@ test('export contains only your data', async () => {
   const mine = await ops.exportData(db, ALICE, []);
   const theirs = await ops.exportData(db, BOB, []);
   assert.ok(mine.events.length >= 1);
-  assert.deepEqual(theirs, { events: [], notifications: [] });
+  assert.deepEqual(theirs, { events: [], notifications: [], settings: null });
+});
+
+test('email alert setting: off by default, saved per user, included in the export', async () => {
+  delete process.env.RESEND_API_KEY;
+  assert.deepEqual(await ops.getSettings(db, ALICE, []), { email_alerts: false, email_available: false });
+  process.env.RESEND_API_KEY = 're_test';
+  try {
+    await ops.updateSettings(db, ALICE, [{ email_alerts: true }]);
+    await ops.updateSettings(db, ALICE, [{ email_alerts: 'yes' }]); // not a boolean: ignored
+    assert.deepEqual(await ops.getSettings(db, ALICE, []), { email_alerts: true, email_available: true });
+    assert.equal((await ops.getSettings(db, BOB, [])).email_alerts, false, "one user's setting never applies to another");
+    assert.equal((await ops.exportData(db, ALICE, [])).settings.email_alerts, true);
+    await ops.updateSettings(db, ALICE, [{ email_alerts: false }]);
+    assert.equal((await ops.getSettings(db, ALICE, [])).email_alerts, false);
+  } finally {
+    delete process.env.RESEND_API_KEY;
+  }
+});
+
+test('retention: deletes old price history only for gifts bought over 12 months ago', async () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const ago = (days) => new Date(now - days * DAY).toISOString();
+  const event = await ops.createEvent(db, ALICE, [{ name: 'Retention', budget_mode: 'total', total_budget: 100 }, []]);
+  const oldBought = await ops.addGift(db, ALICE, [event.id, { name: 'Old bought', status: 'bought', bought_at: ago(400) }]);
+  const newBought = await ops.addGift(db, ALICE, [event.id, { name: 'Recently bought', status: 'bought', bought_at: ago(30) }]);
+  const wanted = await ops.addGift(db, ALICE, [event.id, { name: 'Still wanted' }]);
+  const addHistory = (giftId, days) => db.execute({
+    sql: 'INSERT INTO price_history (user_id, gift_id, price, checked_at) VALUES (?, ?, ?, ?)',
+    args: [ALICE, giftId, 10, ago(days)],
+  });
+  for (const g of [oldBought, newBought, wanted]) {
+    await addHistory(g.id, HISTORY_RETENTION_DAYS + 50);
+    await addHistory(g.id, 10);
+  }
+  await db.execute({ sql: 'INSERT INTO price_check_requests (user_id, created_at) VALUES (?, ?)', args: [ALICE, now - DAY] });
+
+  const { priceHistoryDeleted } = await pruneOldData(db, now);
+  assert.equal(priceHistoryDeleted, 1);
+  const count = async (giftId) => Number((await db.execute({
+    sql: 'SELECT COUNT(*) AS n FROM price_history WHERE gift_id = ?', args: [giftId],
+  })).rows[0].n);
+  assert.equal(await count(oldBought.id), 1, 'only the history older than 12 months goes');
+  assert.equal(await count(newBought.id), 2);
+  assert.equal(await count(wanted.id), 2);
+  const { rows: left } = await db.execute({ sql: 'SELECT COUNT(*) AS n FROM price_check_requests WHERE user_id = ?', args: [ALICE] });
+  assert.equal(Number(left[0].n), 0, 'expired rate-limit records are removed');
 });

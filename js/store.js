@@ -263,6 +263,14 @@ class ServerStore {
     return this.call('listNotifications');
   }
 
+  getSettings() {
+    return this.call('getSettings');
+  }
+
+  updateSettings(patch) {
+    return this.call('updateSettings', patch);
+  }
+
   async markNotificationsRead(ids) {
     if (!ids.length) return;
     await this.call('markNotificationsRead', ids);
@@ -506,6 +514,13 @@ class LocalStore {
     for (const n of this.data.notifications) if (ids.includes(n.id)) n.read = true;
     this.save();
   }
+
+  // The demo never sends email.
+  async getSettings() {
+    return { email_alerts: false, email_available: false };
+  }
+
+  async updateSettings() {}
 }
 
 function emptyData() {

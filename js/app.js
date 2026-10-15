@@ -499,7 +499,13 @@ function accountPage() {
         <input type="checkbox" id="browser-alerts" ${alertsOn ? 'checked' : ''} ${supported ? '' : 'disabled'}>
         <span>Browser notifications for price drops${supported ? '' : ' (not supported in this browser)'}</span>
       </label>
-      <p class="muted small">Price alerts always appear under the bell icon. Browser notifications also pop up while the app is open in a tab.</p>
+      <label class="toggle">
+        <input type="checkbox" id="email-alerts" disabled>
+        <span>Email me when a gift goes on sale or hits my target price</span>
+      </label>
+      <p class="muted small" id="email-alerts-note">${store.demo ? 'Email alerts aren\u2019t available in the demo.' : ''}</p>
+      <p class="muted small">Price alerts always appear under the bell icon. Browser notifications also pop up while the app is open in a tab.
+        Email alerts go to ${esc(user.email || 'your sign-in address')}.</p>
       <label class="field">
         <span>Appearance</span>
         <select id="theme-select">
@@ -544,6 +550,7 @@ function mountAccount(root) {
     }
     pref.set('giftbudget-browser-alerts', e.target.checked ? 'on' : 'off');
   });
+  mountEmailAlerts(root);
   const themeSelect = root.querySelector('#theme-select');
   themeSelect.value = themeChoice();
   themeSelect.addEventListener('change', (e) => setTheme(e.target.value));
@@ -553,6 +560,37 @@ function mountAccount(root) {
     if (store.visitorDemo) return leaveDemo();
     await store.signOut();
     go('/');
+  });
+}
+
+// The email setting lives on the server, so it loads after the page draws.
+async function mountEmailAlerts(root) {
+  const box = root.querySelector('#email-alerts');
+  const note = root.querySelector('#email-alerts-note');
+  if (store.demo) return;
+  try {
+    const settings = await store.getSettings();
+    if (!settings.email_available) {
+      note.textContent = 'Email alerts aren\u2019t switched on for this site yet.';
+      return;
+    }
+    box.checked = settings.email_alerts;
+    box.disabled = false;
+  } catch (err) {
+    note.textContent = 'Couldn\u2019t load your email setting. Reload to try again.';
+    return;
+  }
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    try {
+      await store.updateSettings({ email_alerts: box.checked });
+      toast(box.checked ? 'Email alerts on.' : 'Email alerts off.');
+    } catch (err) {
+      box.checked = !box.checked;
+      fail(err);
+    } finally {
+      box.disabled = false;
+    }
   });
 }
 
@@ -889,7 +927,9 @@ function renderEvent(e) {
     <p class="muted small center">${
       store.demo
         ? 'Prices are simulated for this demo. "Check prices now" moves the demo clock forward six hours.'
-        : 'Prices are simulated for demonstration and don\u2019t come from real stores.'
+        : window.GIFT_CONFIG?.livePrices
+          ? 'Prices come from Google Shopping and are checked about every six hours. Check the store before you buy.'
+          : 'Prices are simulated for demonstration and don\u2019t come from real stores.'
     }</p>`;
 }
 

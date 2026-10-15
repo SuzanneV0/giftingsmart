@@ -22,6 +22,7 @@ export default async function handler(req, res) {
       { sql: 'DELETE FROM recipients WHERE user_id = ?', args: [userId] },
       { sql: 'DELETE FROM events WHERE user_id = ?', args: [userId] },
       { sql: 'DELETE FROM price_check_requests WHERE user_id = ?', args: [userId] },
+      { sql: 'DELETE FROM user_settings WHERE user_id = ?', args: [userId] },
     ], 'write');
     await clerk().users.deleteUser(userId);
     return res.status(200).json({ deleted: true });
