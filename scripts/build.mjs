@@ -14,7 +14,7 @@ const SITE = {
   operator: 'GiftingSmart',
   email: 'giftingsmartshopper@gmail.com',
   province: 'Ontario',
-  updated: 'October 4, 2026', // change when a policy changes
+  updated: 'October 15, 2026', // change when a policy changes
 };
 
 const PAGES = ['about', 'privacy', 'cookies', 'terms', 'legal'];
@@ -35,14 +35,49 @@ for (const f of FILES) cpSync(f, `${OUT}/${f}`, { recursive: true });
 
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const placeholder = (label) => `<span class="placeholder">[${label}]</span>`;
+
+// Real prices come from a price API once PRICE_PROVIDER is set to one (see api/_providers.js);
+// until then the site says prices are simulated. The demo is always simulated.
+const livePrices = !!process.env.PRICE_PROVIDER && process.env.PRICE_PROVIDER !== 'mock';
+const PRICE_TEXT = livePrices
+  ? {
+      footer: 'Prices come from Google Shopping, are checked every six hours, and may not match the store at checkout.',
+      about: `<p>Prices for signed-in accounts come from <b>Google Shopping</b> and are checked about every six hours. If a gift has a
+    store link, we follow that store's price. Prices can change at any time, so always check the store before you buy. The demo
+    uses <b>simulated prices</b> that don't come from any store.</p>`,
+      terms: 'Prices in GiftingSmart come from Google Shopping listings (the demo uses simulated prices).',
+    }
+  : {
+      footer: "Prices shown are simulated for demonstration and don't come from real stores.",
+      about: `<p>Price tracking currently uses <b>simulated prices</b> for demonstration. Prices move and go "on sale" realistically, but they
+    don't come from any store, so sale alerts are examples rather than real deals. Everything else, including budgets, lists and
+    spending, works as described.</p>`,
+      terms: "Right now, prices in GiftingSmart are simulated for demonstration and don't come from any store.",
+    };
+
+// Providers listed in the privacy policy only once they're switched on.
+const emailAlerts = !!process.env.RESEND_API_KEY;
+const PROVIDER_ROWS = [
+  livePrices && '<tr><td>SerpApi</td><td>Looks up current prices on Google Shopping. It receives only gift names, never your name, email or the people on your lists</td><td>United States</td></tr>',
+  emailAlerts && '<tr><td>Resend</td><td>Sends price alert emails if you turn them on (your email address and the alert)</td><td>United States</td></tr>',
+].filter(Boolean).join('\n        ');
+
 const fill = {
   operator: SITE.operator ? esc(SITE.operator) : placeholder('your name'),
   email: SITE.email ? `<a href="mailto:${esc(SITE.email)}">${esc(SITE.email)}</a>` : placeholder('contact email'),
   province: SITE.province ? esc(SITE.province) : placeholder('province'),
   updated: esc(SITE.updated),
+  about_prices: PRICE_TEXT.about,
+  terms_prices: esc(PRICE_TEXT.terms),
+  provider_rows: PROVIDER_ROWS,
 };
 
-const footer = readFileSync('index.html', 'utf8').match(/<footer class="site-footer">[\s\S]*?<\/footer>/)[0];
+// The footer's price note in index.html is the simulated wording; swap it when prices are real.
+const FOOTER_NOTE = /(<span class="muted footer-note">)[^<]*(<\/span>)/;
+const indexHtml = readFileSync('index.html', 'utf8');
+if (!FOOTER_NOTE.test(indexHtml)) throw new Error('index.html: footer price note not found');
+writeFileSync(`${OUT}/index.html`, indexHtml.replace(FOOTER_NOTE, `$1${esc(PRICE_TEXT.footer)}$2`));
+const footer = readFileSync(`${OUT}/index.html`, 'utf8').match(/<footer class="site-footer">[\s\S]*?<\/footer>/)[0];
 
 for (const name of PAGES) {
   const src = readFileSync(`pages/${name}.html`, 'utf8');
@@ -131,6 +166,6 @@ if (!/^pk_(test|live)_[A-Za-z0-9+/=_-]+$/.test(key)) {
 writeFileSync(
   `${OUT}/config.js`,
   `// Generated at build time by scripts/build.mjs. Do not edit.\n` +
-    `window.GIFT_CONFIG = ${JSON.stringify({ clerkPublishableKey: key }, null, 2)};\n`,
+    `window.GIFT_CONFIG = ${JSON.stringify({ clerkPublishableKey: key, livePrices }, null, 2)};\n`,
 );
-console.log('build: sign-in connected (Clerk)');
+console.log(`build: sign-in connected (Clerk), ${livePrices ? `prices from ${process.env.PRICE_PROVIDER}` : 'simulated prices'}`);

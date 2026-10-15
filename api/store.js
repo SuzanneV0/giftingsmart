@@ -1,6 +1,7 @@
 // GiftingSmart's data API: one POST endpoint whose `op` mirrors the methods of the browser's store
 // (js/store.js). Every query is scoped to the signed-in user, and writes only accept known columns.
 import { body, database, fail, newId, requireUser, rows, sameOrigin, UUID } from './_lib.js';
+import { emailEnabled } from './_email.js';
 
 // Columns the browser may set on each table (never id, user_id, event_id or timestamps it doesn't own).
 const EVENT_FIELDS = ['name', 'event_date', 'budget_mode', 'total_budget', 'notes'];
@@ -173,12 +174,28 @@ export const ops = {
     });
   },
 
+  /** Account settings kept on the server (other preferences stay in the browser). */
+  async getSettings(db, userId) {
+    const [row] = rows(await db.execute({ sql: 'SELECT email_alerts FROM user_settings WHERE user_id = ?', args: [userId] }));
+    return { email_alerts: row?.email_alerts ?? false, email_available: emailEnabled() };
+  },
+
+  async updateSettings(db, userId, [patch]) {
+    if (typeof patch?.email_alerts !== 'boolean') return;
+    await db.execute({
+      sql: `INSERT INTO user_settings (user_id, email_alerts, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT (user_id) DO UPDATE SET email_alerts = excluded.email_alerts, updated_at = excluded.updated_at`,
+      args: [userId, patch.email_alerts ? 1 : 0, new Date().toISOString()],
+    });
+  },
+
   /** Everything stored about the user, for "Download my data" (the browser adds the account details from Clerk). */
   async exportData(db, userId) {
     const events = rows(await db.execute({ sql: 'SELECT * FROM events WHERE user_id = ?', args: [userId] }));
     const children = await eventsWithChildren(db, userId, events.map((e) => e.id), 'price, source, checked_at');
     const notifications = rows(await db.execute({ sql: 'SELECT * FROM notifications WHERE user_id = ?', args: [userId] }));
-    return { events: assemble(events, children, true), notifications };
+    const [settings] = rows(await db.execute({ sql: 'SELECT email_alerts, updated_at FROM user_settings WHERE user_id = ?', args: [userId] }));
+    return { events: assemble(events, children, true), notifications, settings: settings ?? null };
   },
 };
 

@@ -1,98 +1,87 @@
 # Privacy audit: GiftingSmart
 
-> **Update, October 4, 2026:** GiftingSmart has since moved off Supabase. Sign-in is now Clerk (Google only, loaded only when someone signs in or is already signed in), data is in a Turso database behind the app's own API, and the price checker runs as a Vercel Function triggered by cron-job.org. The findings below describe the Supabase setup as audited on October 1; the current setup is in the README and the privacy policy.
-
-**Date:** October 1, 2026
-**Scope:** the live site (giftingsmart.shop, formerly gift-budget.vercel.app), the browser code, the Supabase project *GiftingSmart* (database, auth, Edge Functions, cron) and the Vercel project *gift-budget*.
+**Updated:** October 15, 2026, for the current setup: Clerk sign-in, a Turso database, Vercel Functions, optional SerpApi prices and Resend email alerts.
+**Scope:** the live site (giftingsmart.shop), the browser code in `js/`, the server code in `api/`, the build script, and the providers listed below.
 **Framework:** Canada's PIPEDA fair information principles, plus general good practice (GDPR-style data minimisation and user rights).
 
-This is a technical audit, not legal advice. Have a lawyer review the policies before relying on them, especially once the placeholders (name, contact email, province) are filled in.
+This is a technical audit, not legal advice. The policies still need a review by a lawyer (see [Open items](#open-items)).
 
-## Summary
+## Current setup at a glance
 
-| | Finding | Status |
-|---|---|---|
-| 1 | Third parties learned of every visit: Google Fonts and jsDelivr (app library) | **Fixed**: fonts and library self-hosted |
-| 2 | Google profile photo loaded from Google on every page view | **Fixed**: initials shown instead; photo never requested |
-| 3 | No way to download or delete your data | **Fixed**: "Download my data" and "Delete my account" |
-| 4 | No privacy policy, cookie policy, terms or legal notice | **Fixed**: five pages added, linked in the footer and at sign-in |
-| 5 | Security headers allowed more than needed | **Fixed**: stricter CSP (self + Supabase only), HSTS, COOP |
-| 6 | Names of other people (gift recipients) collected | **Mitigated**: hint to use a first name or nickname; policy covers it |
-| 7 | Email/password sign-up enabled in Supabase but unused | **Fixed**: email provider turned off |
-| 8 | Data stored in the US (cross-border transfer) | **Disclosed** in the privacy policy, as PIPEDA requires |
-| 9 | Policy placeholders: name, contact email, province | **Fixed**: GiftingSmart, giftingsmartshopper@gmail.com, Ontario |
-| 10 | Edge Functions accept requests from any website (CORS `*`) | **Fixed**: only giftingsmart.shop (and localhost) may call them from a browser; others get 403 |
-| 11 | No limit on user-triggered price checks | **Fixed**: 20 per account per 10 minutes, enforced in the database |
+| Part | Provider | Where | Personal information it handles |
+|---|---|---|---|
+| Sign-in | Clerk (Google only) | United States | Name, email, Google account ID, profile photo link |
+| Database | Turso (libSQL) | Canada (Montréal) | Clerk user ID, events, people, gifts, prices, alerts, the email alert setting |
+| Server code | Vercel Functions, region `yul1` | Canada (Montréal) | Everything above while handling a request |
+| Website delivery | Vercel | Global network | Server logs (IP, browser, address, time) |
+| Scheduled price check | cron-job.org | Germany | None: it only sends a secret header |
+| Prices (when `PRICE_PROVIDER=serpapi`) | SerpApi (Google Shopping) | United States | Gift names only |
+| Email alerts (when `RESEND_API_KEY` is set) | Resend | United States | The email address and alert text of people who opt in |
+| Analytics (after consent) | Google Analytics | United States | Anonymised page views |
+
+SerpApi and Resend appear in the privacy policy's provider table only once they're switched on: `scripts/build.mjs` adds their rows when `PRICE_PROVIDER` or `RESEND_API_KEY` is set at build time. The footer, About page, Terms and event pages also stop saying prices are simulated once a real provider is set.
 
 ## What personal information exists, and where
 
 | Data | Source | Stored in | Who can read it |
 |---|---|---|---|
-| Name, email, Google ID, profile photo URL | Google sign-in | Supabase Auth (`auth.users`) | You; service role (server functions) |
-| Events, people (names, budgets), gifts, prices paid, links | You | Supabase Postgres | You only (row-level security) |
-| Price history and price alerts | `check-prices` function | Supabase Postgres | You only (read), server (write) |
-| Sign-in session token | Supabase Auth | Your browser (localStorage) | Your browser |
-| Preferences (theme, currency, alert settings) | You | Your browser (localStorage) | Your browser |
-| Server logs (IP, user agent, URL, time) | Automatic | Vercel and Supabase | Providers, for operations/security |
+| Name, email, Google ID, profile photo link | Google sign-in | Clerk | You, and the server functions (to delete the account or send an alert email) |
+| Events, people (names, budgets), gifts, prices paid, links | You | Turso | You only: every query is scoped to your Clerk user ID |
+| Price history and price alerts | `api/check-prices.js` | Turso | You only (read); the server writes them |
+| Email alert setting (on or off) | You, in My account | Turso (`user_settings`) | You only |
+| Rate-limit records (one row per price check you start) | `api/check-prices.js` | Turso | Server only; removed after 10 minutes |
+| Sign-in session | Clerk | Your browser (cookies) | Your browser |
+| Preferences (theme, currency, browser notifications) | You | Your browser (localStorage) | Your browser |
+| Server logs (IP, user agent, address, time) | Automatic | Vercel, Turso, Clerk | Providers, for operations and security |
 
-No advertising. Google Analytics (added October 2, 2026) loads only after a visitor clicks **Accept** on the cookie banner; before that, no cookies are set and all requests go to the site itself or to Supabase. Page views are sent with generic titles and with event IDs removed, so no event, gift or people names reach Google. "Cookie settings" in the footer reopens the banner, and declining removes the `_ga` cookies. Google signals and ad personalisation are disabled in code, Enhanced measurement's **Outbound clicks** is turned off in the GA property (so gift store links aren't sent), and a live test confirmed no event names or IDs reach Google.
+GiftingSmart's database never stores a name or email address. When an alert email is sent, the address is looked up from Clerk at that moment and passed straight to Resend.
 
 ## Checks performed
 
-### Database (Supabase)
-- **Row-level security** is on for all five tables (`events`, `recipients`, `gifts`, `price_history`, `notifications`), and every policy limits rows to `auth.uid() = user_id`. Tested: an anonymous request sees 0 rows and cannot insert.
-- **Ownership trigger** stops a user from attaching people or gifts to someone else's event.
-- **Deletion cascades:** every table references `auth.users` with `ON DELETE CASCADE` (verified in `pg_constraint`), so deleting the account removes all of that user's rows.
-- **Server-only writes:** users can't write price history or alerts; only the `check-prices` function (service role) can.
-- **Supabase security advisor:** no findings for the database. The only warning is "leaked password protection", which applies to email/password sign-in (see finding 7).
+### Data API (`api/store.js`)
+- **Per-user isolation:** every operation takes the user ID from the verified Clerk session token, never from the request, and every query filters on it. `tests/api-store.test.mjs` checks that one user can't list, read, change or delete another's events, people, gifts, alerts or settings.
+- **Allowed columns only:** each table has a list of fields the browser may set; `id`, `user_id` and timestamps are always set by the server.
+- **Integrity:** a gift's person must belong to the same event. Database checks limit text lengths, require gift links to start with `http://` or `https://`, and reject negative amounts.
+- **Errors:** clients get a generic message; details go to the function logs.
 
-### Server functions
-- `check-prices`: accepts either a signed-in user's token (and then only touches that user's gifts) or the cron secret, which is stored in Vault and verified by the database. Tested: no token, a bad token and a wrong secret are all refused (401).
-- `delete-account` (new): deletes only the account of the signed-in caller, and requires an explicit `confirm: true`. Tested: no token and a bad token give 401; missing confirmation gives 400.
+### Price checker (`api/check-prices.js`)
+- **Two ways in:** a signed-in user's token (then only that user's gifts are touched) or the cron secret, compared in constant time. A wrong secret gets 401.
+- **Rate limit:** 20 user-started checks per account per 10 minutes, counted and recorded in one transaction.
+- **Cost control with a real provider:** each run checks at most `SERPAPI_MAX_PER_RUN` gifts (default 100, least recently checked first), identical searches in a run are made once, and "Check prices now" skips gifts checked in the last hour.
+- **What SerpApi receives:** the gift's name and the API key, nothing else. The store link is used only on the server, to choose that store's offer from the results. `tests/providers.test.mjs` checks the request contents.
+
+### Email alerts (`api/_email.js`)
+- **Opt-in:** off by default. "Email me when a gift goes on sale or hits my target price" in My account turns it on, and the setting is hidden when the site has no Resend key.
+- **One email per person per check**, listing that run's alerts, with a link to turn email alerts off.
+- **Escaping:** gift names are HTML-escaped in the email body (tested).
+- Sending failures are logged and never stop the price check.
+
+### Retention
+- After each scheduled check, `pruneOldData` deletes price history older than 12 months for gifts that were marked bought more than 12 months ago, and expired rate-limit records. Price history for gifts still on a list is kept, since sale detection uses it. The privacy policy's "How long we keep it" section says this.
+- Deleting an event cascades to its people, gifts, price history and alerts. Deleting the account removes every row with the user's ID (including `user_settings` and rate-limit records), then the Clerk user.
 
 ### Browser
-- **Third-party requests:** previously Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`), jsDelivr (`cdn.jsdelivr.net`) and Google image servers (`googleusercontent.com`). Each request revealed the visitor's IP address and the page to that company. Now everything is served from the site itself, apart from Supabase API calls.
-- **Content Security Policy:** `default-src 'self'`; scripts, fonts and images only from the site; network calls only to Supabase; no plugins, no framing. Inline scripts aren't allowed.
-- **XSS:** user-entered text is HTML-escaped everywhere it's displayed; gift links must start with http(s) and open with `rel="noopener noreferrer"`, so stores don't learn which page you came from.
-- **Storage:** documented in full on the Cookie policy page. All items are strictly necessary for features the user asked for.
-- **Notifications:** browser notifications are opt-in and require the browser's own permission prompt.
+- **Third parties:** fonts are self-hosted. Clerk's script loads only for someone signing in or already signed in. The Google profile photo is never requested (initials instead). Before consent, other visitors' browsers contact only giftingsmart.shop.
+- **Content Security Policy** (`vercel.json`): scripts and network calls only to the site and Clerk, plus Google Analytics after consent; no plugins; no framing.
+- **XSS:** user text is HTML-escaped wherever it's shown; gift links must be `http(s)` and open with `rel="noopener noreferrer"`.
+- **Same-origin rule:** the API refuses browser requests from other websites (403).
+- **Analytics:** Google Analytics loads only after **Accept** on the cookie banner. Page views use generic titles with event IDs removed. Google signals and ad personalisation are off in code. Outbound-click tracking is off in the GA property, and a live test on October 2, 2026 found no event names or IDs reaching Google.
 
-### Sign-in (Google OAuth)
-- Requests only the default `openid email profile` scopes. No access to Gmail, contacts, Drive, etc.
-- Uses the PKCE flow; the one-time code is removed from the address bar after sign-in.
+### Hosting and build
+- Only the files listed in `scripts/build.mjs` are published, plus the functions in `api/`.
+- The build writes only the Clerk publishable key into `config.js` and refuses anything that looks like a secret key. The Clerk secret key, Turso token, cron secret, SerpApi key and Resend key are read only by the functions.
 
-### Hosting (Vercel)
-- Only the files the build copies are published (no README, migrations or server code; verified that `/README.md` and migration URLs return 404).
-- The Supabase **secret and service role keys are never published**: the build refuses to write anything except the URL and publishable key.
+## History
 
-## Your action items
+- **October 1, 2026:** first audit, of the original Supabase setup. Fixed then: third-party fonts and libraries, the profile photo, download and delete, the policy pages, security headers, unused email/password sign-up, CORS, the policy placeholders (GiftingSmart, giftingsmartshopper@gmail.com, Ontario), and a price-check rate limit.
+- **October 2, 2026:** security review (no high or medium findings) and Google Analytics behind a consent banner.
+- **October 4, 2026:** moved from Supabase to Clerk, Turso and Vercel Functions. Supabase's row-level security was replaced by per-user scoping in the API, covered by tests.
+- **October 15, 2026:** added the SerpApi price provider, opt-in email alerts through Resend, and the 12-month retention job. Rewrote this audit for the current setup.
 
-Items 1 to 3 were completed on October 1, 2026 (details filled in, email sign-up turned off, consent screen links updated to giftingsmart.shop).
+## Open items
 
-1. **Fill in the placeholders.** In `scripts/build.mjs`, set `SITE.operator` (your name), `SITE.email` (a contact address; a dedicated one like privacy@ is best) and `SITE.province`. Push, and every page updates.
-2. **Turn off email/password sign-up in Supabase:** Dashboard → Authentication → Sign In / Providers → **Email** → disable. The app only uses Google, but while Email is enabled, anyone with the public API key could create an email/password account directly through the API.
-3. **Google OAuth consent screen:** add links to `https://giftingsmart.shop/privacy` and `/terms`, and the app's home page. Google requires these to publish the app beyond test users.
-4. **Have the policies reviewed** by a lawyer familiar with Canadian privacy law (and Quebec's Law 25 if you'll have users there).
-5. **Keep policies in sync:** if you add analytics, email alerts, a real price API or a new provider, update the privacy and cookie pages first and change `SITE.updated`.
+1. **Have the policies reviewed** by a lawyer familiar with Canadian privacy law, and Quebec's Law 25 if there will be users there. The new US providers (SerpApi, Resend) add cross-border transfers worth covering.
+2. **Before switching on SerpApi or Resend in Vercel:** check each provider's data processing terms, verify the sending domain (giftingsmart.shop) in Resend, and redeploy so the policy pages pick up the new provider rows.
+3. **Keep policies in sync:** when adding a provider or a new kind of data, update the privacy and cookie pages and change `SITE.updated` in `scripts/build.mjs`.
 
-## Optional hardening (low priority)
-- When a real price API is connected, send it only the gift's store link (never your name, email or the recipient's name), and add the provider to the privacy policy's provider table.
-- Consider a data-retention job that removes price history older than, say, 12 months for gifts that were bought long ago.
-
-## Security review (October 2, 2026)
-
-A full review of the database rules, Edge Functions, browser code and deployment settings. No high or medium severity issues were found. Fixed:
-
-| # | Finding | Fix |
-|---|---|---|
-| S1 | A gift could be linked to another account's person (data integrity; IDs are unguessable and nothing was readable) | Ownership trigger now also requires the person to belong to the gift's event |
-| S2 | Default table grants gave `anon`/`authenticated` every privilege, with RLS as the only guard | Least-privilege grants: `anon` has none; signed-in users can only read price history, read/delete alerts and update only `read` |
-| S3 | `events.notes`, `gifts.url`, alert text and price source had no length limit | Length check constraints (2,000 / 2,048 / 500 / 40) |
-| S4 | `check-prices` returned internal database error text | Generic error to the client, details in function logs |
-| S5 | Edge Functions imported `supabase-js@2` (floating) | Pinned to 2.117.2, matching `vendor/supabase.js` |
-
-Verified after the fix (as the `authenticated` role, rolled back): add person, add gift, mark bought, mark alert read and delete an event all work; cross-account link, editing alert text, writing price history, reading the rate-limit table and signed-out table access are all blocked.
-
-Accepted: `style-src 'unsafe-inline'` (style attributes for bar widths; no user data reaches styles); account deletion confirmed by typing DELETE rather than re-authenticating; Supabase's leaked-password warning (no passwords are used).
-
-**Note for future tables:** Supabase grants new tables to `anon` and `authenticated` by default. When adding a table, enable RLS and revoke what the app doesn't need, as in `20261001000100_security_hardening.sql`.
+Accepted risks: `style-src 'unsafe-inline'` (used for bar widths; no user data reaches styles), and account deletion confirmed by typing DELETE rather than signing in again.

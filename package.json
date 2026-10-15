@@ -5,10 +5,14 @@
   "description": "GiftingSmart: gift planner and budget tracker. Static front end plus Vercel Functions in api/.",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/*.mjs"
+    "test": "node --test tests/*.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@clerk/backend": "^3.22.0",
     "@libsql/client": "^0.18.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
   }
 }

@@ -4,9 +4,11 @@
 //   TURSO_DATABASE_URL, TURSO_AUTH_TOKEN  the database
 //   CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY  sign-in (the publishable key is also written into config.js)
 //   CRON_SECRET                            shared with cron-job.org for the scheduled price check
+//   PRICE_PROVIDER, SERPAPI_KEY            where prices come from (see _providers.js)
+//   RESEND_API_KEY, EMAIL_FROM             email alerts (see _email.js)
 //
 // The browser never talks to the database. Every function checks the Clerk session and scopes every
-// query to the signed-in user's own rows: the job Supabase's row-level security used to do.
+// query to the signed-in user's own rows.
 import { createClient } from '@libsql/client';
 import { createClerkClient, verifyToken } from '@clerk/backend';
 
@@ -80,7 +82,12 @@ CREATE TABLE IF NOT EXISTS price_check_requests (
   user_id TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS price_check_requests_user_idx ON price_check_requests (user_id, created_at);`;
+CREATE INDEX IF NOT EXISTS price_check_requests_user_idx ON price_check_requests (user_id, created_at);
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id TEXT PRIMARY KEY,
+  email_alerts INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);`;
 
 export async function database() {
   if (!db) {
@@ -107,7 +114,7 @@ export async function requireUser(req, res) {
   }
 }
 
-/** Requests from browsers on other websites are refused (same rule the Edge Functions had). */
+/** Requests from browsers on other websites are refused. */
 export function sameOrigin(req, res) {
   const origin = req.headers.origin;
   if (origin && origin !== `https://${req.headers.host}` && !/^http:\/\/localhost(:\d+)?$/.test(origin)) {
@@ -123,7 +130,7 @@ export function body(req) {
 }
 
 // SQLite has no booleans: turn 0/1 back into true/false for the app.
-const BOOLEANS = new Set(['track_price', 'read']);
+const BOOLEANS = new Set(['track_price', 'read', 'email_alerts']);
 export function rows(result) {
   return result.rows.map((row) => {
     const out = {};
