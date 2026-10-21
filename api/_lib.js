@@ -83,6 +83,12 @@ CREATE TABLE IF NOT EXISTS price_check_requests (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS price_check_requests_user_idx ON price_check_requests (user_id, created_at);
+CREATE TABLE IF NOT EXISTS api_usage (
+  day TEXT NOT NULL,
+  name TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, name)
+);
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id TEXT PRIMARY KEY,
   email_alerts INTEGER NOT NULL DEFAULT 0,
@@ -97,6 +103,22 @@ export async function database() {
   if (!schemaReady) schemaReady = db.executeMultiple(SCHEMA).catch((e) => { schemaReady = null; throw e; });
   await schemaReady;
   return db;
+}
+
+/**
+ * Reserves up to `want` calls to a paid service from today's budget of `limit` and returns how many
+ * were granted (0 once the budget is spent). Counts are kept in the database, so the cap holds across
+ * serverless instances, cron runs and signed-in users alike. Reserved calls are not refunded.
+ */
+export async function reserveBudget(db, name, want, limit) {
+  const day = new Date().toISOString().slice(0, 10);
+  const [, before, , after] = await db.batch([
+    { sql: 'INSERT OR IGNORE INTO api_usage (day, name, count) VALUES (?, ?, 0)', args: [day, name] },
+    { sql: 'SELECT count FROM api_usage WHERE day = ? AND name = ?', args: [day, name] },
+    { sql: 'UPDATE api_usage SET count = MIN(count + ?, ?) WHERE day = ? AND name = ?', args: [want, Math.max(limit, 0), day, name] },
+    { sql: 'SELECT count FROM api_usage WHERE day = ? AND name = ?', args: [day, name] },
+  ], 'write');
+  return Math.max(0, Number(after.rows[0][0]) - Number(before.rows[0][0]));
 }
 
 export const clerk = () => createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });

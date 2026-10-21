@@ -57,9 +57,11 @@ export function pickShoppingResult(results, url) {
 //   SERPAPI_KEY      the API key (required)
 //   SERPAPI_COUNTRY  Google country code for prices, default "ca" (Canadian stores, in CAD)
 //   SERPAPI_MAX_PER_RUN  gifts checked per run, default 100
+//   SERPAPI_DAILY_LIMIT  hard cap on lookups per UTC day across all runs and users, default 300
 const serpapi = {
   name: 'serpapi',
   maxPerRun: Number(process.env.SERPAPI_MAX_PER_RUN) || 100,
+  dailyLimit: Number(process.env.SERPAPI_DAILY_LIMIT) || 300,
   minRecheckMs: 60 * 60 * 1000,
   cache: new Map(),
   async getPrice(gift) {

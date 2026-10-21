@@ -2,6 +2,8 @@ node_modules/
 .vercel/
 .env
 .env.*
+!.env.example
+.claude/settings.local.json
 .DS_Store
 Thumbs.db
 dist/

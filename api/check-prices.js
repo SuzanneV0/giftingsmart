@@ -7,7 +7,7 @@
 //     limited to RATE_LIMIT checks per RATE_WINDOW
 // New alerts are also emailed to people who turned email alerts on (see _email.js).
 import { timingSafeEqual } from 'node:crypto';
-import { body, clerk, database, fail, newId, requireUser, rows, sameOrigin, UUID } from './_lib.js';
+import { body, clerk, database, fail, newId, requireUser, reserveBudget, rows, sameOrigin, UUID } from './_lib.js';
 import { detectAlert } from '../shared/pricing.js';
 import { getProvider } from './_providers.js';
 import { alertEmail, emailEnabled, sendEmail } from './_email.js';
@@ -15,6 +15,8 @@ import { alertEmail, emailEnabled, sendEmail } from './_email.js';
 const RATE_LIMIT = 20;
 const RATE_WINDOW_MS = 10 * 60 * 1000;
 const LOOKUPS_AT_ONCE = 5;
+// Most alert emails one run will send (Resend bills per email).
+const MAX_EMAILS_PER_RUN = Number(process.env.EMAIL_MAX_PER_RUN) || 200;
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Price history is kept for 12 months after a gift is bought, then deleted.
 export const HISTORY_RETENTION_DAYS = 365;
@@ -62,7 +64,7 @@ export async function pruneOldData(db, now = Date.now()) {
 /** Emails each person who opted in the alerts this run created for them. Failures are logged, not thrown. */
 async function emailAlerts(db, alertsByUser) {
   if (!emailEnabled() || !alertsByUser.size) return 0;
-  const ids = [...alertsByUser.keys()];
+  const ids = [...alertsByUser.keys()].slice(0, MAX_EMAILS_PER_RUN);
   const optedIn = rows(await db.execute({
     sql: `SELECT user_id FROM user_settings WHERE email_alerts = 1 AND user_id IN (${ids.map(() => '?').join(', ')})`,
     args: ids,
@@ -125,11 +127,16 @@ export default async function handler(req, res) {
       where.push('(last_checked_at IS NULL OR last_checked_at < ?)');
       args.push(new Date(Date.now() - provider.minRecheckMs).toISOString());
     }
-    const gifts = rows(await db.execute({
+    let gifts = rows(await db.execute({
       sql: `SELECT id, user_id, event_id, name, url, current_price, target_price FROM gifts WHERE ${where.join(' AND ')}
             ORDER BY last_checked_at IS NOT NULL, last_checked_at LIMIT ${Number(provider.maxPerRun) || 100}`,
       args,
     }));
+    // Paid providers have a daily budget shared by every run and user; once it's spent, nothing is looked up.
+    if (gifts.length && provider.dailyLimit) {
+      const granted = await reserveBudget(db, provider.name, gifts.length, provider.dailyLimit);
+      gifts = gifts.slice(0, granted);
+    }
     const retention = isCron ? await pruneOldData(db) : undefined;
     if (!gifts.length) return res.status(200).json({ checked: 0, alerts: 0, retention });
 
