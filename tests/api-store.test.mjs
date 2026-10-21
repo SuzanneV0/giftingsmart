@@ -165,3 +165,11 @@ test('retention: deletes old price history only for gifts bought over 12 months 
   const { rows: left } = await db.execute({ sql: 'SELECT COUNT(*) AS n FROM price_check_requests WHERE user_id = ?', args: [ALICE] });
   assert.equal(Number(left[0].n), 0, 'expired rate-limit records are removed');
 });
+
+test('reserveBudget grants calls up to the daily limit and then none', async () => {
+  const { database, reserveBudget } = await import('../api/_lib.js');
+  const db = await database();
+  assert.equal(await reserveBudget(db, 'test-svc', 5, 8), 5);
+  assert.equal(await reserveBudget(db, 'test-svc', 5, 8), 3);
+  assert.equal(await reserveBudget(db, 'test-svc', 5, 8), 0);
+});
